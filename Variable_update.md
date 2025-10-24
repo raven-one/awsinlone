@@ -2,6 +2,11 @@
 Run from terminal that is connected to aws cli
 
 
+
+### Start 
+
+REGION variable added
+run step 1 yaml files
 ```bash
 
 REGION=eu-west-1
@@ -13,7 +18,13 @@ aws cloudformation deploy \
   --parameter-overrides $(yq -r 'to_entries|.[]|"\(.key)=\(.value)"' 01network/params-network.yaml) \
   --region "$REGION" --no-fail-on-empty-changeset
 ```
-# grab outputs for the next stacks
+
+
+When step 1 deployment is done and network is up and running
+We will need to grab some new information and put them into varibales
+
+### Run after step 1 is done
+```bash
 NET=wp-net
 VPC_ID=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$NET" --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" --output text)
 SUBNET1=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$NET" --query "Stacks[0].Outputs[?OutputKey=='PublicSubnet1Id'].OutputValue" --output text)
@@ -24,6 +35,8 @@ ADMIN_SG=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$
 ALB_SG=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$NET" --query "Stacks[0].Outputs[?OutputKey=='ALBSGId'].OutputValue" --output text)
 WEB_SG=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$NET" --query "Stacks[0].Outputs[?OutputKey=='WebSGId'].OutputValue" --output text)
 ```
+Write needed information to the step 2 param.yaml file
+```bash
 # write into 02 params
 yq -i "
   .VpcId=\"$VPC_ID\" |
@@ -33,19 +46,28 @@ yq -i "
   .EFSSGId=\"$EFS_SG\"
 " 02db_efs/params-data.yaml -y
 ````
-# --- 02: db + efs ---
+
+Deploy step 2, creation of DB and EFS
+```bash
+# 02: db + efs 
 aws cloudformation deploy \
   --stack-name wp-db-efs \
   --template-file 02db_efs/data.yaml \
   --parameter-overrides $(yq -r 'to_entries|.[]|"\(.key)=\(.value)"' 02db_efs/params-data.yaml) \
   --region "$REGION" --no-fail-on-empty-changeset
+```
 
-# after 02, fill vars for 03 + 04
+
+When step 2 is done and running
+we will get needed information from DB and EFS
+```bash
 DATA=wp-db-efs
 EFS_ID=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$DATA" --query "Stacks[0].Outputs[?OutputKey=='EFSId'].OutputValue" --output text)
 EFS_AP=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$DATA" --query "Stacks[0].Outputs[?OutputKey=='EFSAccessPointId'].OutputValue" --output text)
 DB_ENDPOINT=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$DATA" --query "Stacks[0].Outputs[?OutputKey=='DBEndpoint'].OutputValue" --output text)
-
+```
+and than we will add the new varibale information into the params for step 3 and 4
+```bash
 # write into 03 + 04 params
 yq -i "
   .EFSId=\"$EFS_ID\" |
@@ -65,13 +87,10 @@ yq -i "
   .EFSAccessPointId=\"$EFS_AP\"
 " 04web_alb_scaling/params-web.yaml -y
 
-# --- 03: admin/provisioner (JSON form handles spaces like "Viking Mead") ---
-aws cloudformation deploy \
-  --stack-name wp-admin \
-  --template-file 03admin_server/admin.yaml \
-  --parameter-overrides "$(yq -o=json -I=0 'to_entries|map({ParameterKey:.key, ParameterValue:(.value|tostring)})' 03admin_server/params-admin.yaml)" \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region "$REGION" --no-fail-on-empty-changeset
+```
+
+```bash
+
 
 # --- 04: web tier ---
 aws cloudformation deploy \
@@ -80,7 +99,9 @@ aws cloudformation deploy \
   --parameter-overrides $(yq -r 'to_entries|.[]|"\(.key)=\(.value)"' 04web_alb_scaling/params-web.yaml) \
   --capabilities CAPABILITY_NAMED_IAM \
   --region "$REGION" --no-fail-on-empty-changeset
+```
 
+```bash
 # show ALB URL
 ALB_DNS=$(aws cloudformation describe-stacks --region "$REGION" --stack-name wp-web --query "Stacks[0].Outputs[?OutputKey=='ALBDNS'].OutputValue" --output text)
 echo "ALB URL: http://$ALB_DNS"
